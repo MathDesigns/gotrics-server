@@ -1,60 +1,68 @@
 package api
 
 import (
+	"encoding/json"
+	"gotrics-server/internal/storage"
 	"net/http"
-	"sync"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-type MetricsStore struct {
-	sync.RWMutex
-	Data map[string]Metrics
-}
+func (s *Server) handlePostMetrics(c *gin.Context) {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+		return
+	}
 
-var store = MetricsStore{
-	Data: make(map[string]Metrics),
-}
+	tokenParts := strings.Split(authHeader, " ")
+	if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token format"})
+		return
+	}
 
-type Metrics struct {
-	NodeID      string `json:"node_id"`
-	CPU         string `json:"cpu"`
-	CPUModel    string `json:"cpu_model"`
-	NumCores    int    `json:"num_cores"`
-	NumThreads  int    `json:"num_threads"`
-	UsedMemory  uint64 `json:"used_memory"`
-	TotalMemory uint64 `json:"total_memory"`
-	Uptime      uint64 `json:"uptime"`
-	Platform    string `json:"platform"`
-	UsedSpace   uint64 `json:"used_space"`
-	TotalSpace  uint64 `json:"total_space"`
-}
+	if tokenParts[1] != s.config.AgentAuthToken {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Invalid token"})
+		return
+	}
 
-func handlePostMetrics(c *gin.Context) {
-	var metrics Metrics
-	if err := c.ShouldBindJSON(&metrics); err != nil {
+	var metric storage.Metric
+	if err := c.ShouldBindJSON(&metric); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	store.Lock()
-	store.Data[metrics.NodeID] = metrics
-	store.Unlock()
 
-	c.JSON(http.StatusOK, gin.H{"status": "success"})
-}
-
-func handleGetMetrics(c *gin.Context) {
-	store.RLock()
-	defer store.RUnlock()
-
-	metrics := make([]Metrics, 0, len(store.Data))
-	for _, m := range store.Data {
-		metrics = append(metrics, m)
+	if err := s.store.WriteMetric(c.Request.Context(), &metric); err != nil {
+		s.logger.Printf("Failed to write metric to store: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store metric"})
+		return
 	}
-	c.JSON(http.StatusOK, metrics)
+
+	metricJSON, err := json.Marshal(metric)
+	if err == nil {
+		s.hub.broadcast <- metricJSON
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"status": "ok"})
 }
 
-func RegisterRoutes(router *gin.Engine) {
-	router.POST("/metrics", handlePostMetrics)
-	router.GET("/metrics", handleGetMetrics)
+func (s *Server) handleGetMetrics(c *gin.Context) {
+	hostname := c.Param("hostname")
+	durationStr := c.DefaultQuery("last", "1h")
+	duration, err := time.ParseDuration(durationStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid duration format"})
+		return
+	}
+
+	metrics, err := s.store.GetHostMetrics(c.Request.Context(), hostname, duration)
+	if err != nil {
+		s.logger.Printf("Failed to get host metrics from store: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve metrics"})
+		return
+	}
+
+	c.JSON(http.StatusOK, metrics)
 }

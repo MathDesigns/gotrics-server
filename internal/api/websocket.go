@@ -1,47 +1,76 @@
 package api
 
 import (
+	"log"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"gotrics-server/internal/logger"
-	"net/http"
 )
 
-var clients = make(map[*websocket.Conn]bool)
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+type Hub struct {
+	clients    map[*websocket.Conn]bool
+	broadcast  chan []byte
+	register   chan *websocket.Conn
+	unregister chan *websocket.Conn
 }
 
-func HandleWebSocket(c *gin.Context) {
+func NewHub() *Hub {
+	return &Hub{
+		broadcast:  make(chan []byte),
+		register:   make(chan *websocket.Conn),
+		unregister: make(chan *websocket.Conn),
+		clients:    make(map[*websocket.Conn]bool),
+	}
+}
+
+func (h *Hub) Run() {
+	for {
+		select {
+		case client := <-h.register:
+			h.clients[client] = true
+		case client := <-h.unregister:
+			if _, ok := h.clients[client]; ok {
+				delete(h.clients, client)
+				client.Close()
+			}
+		case message := <-h.broadcast:
+			for client := range h.clients {
+				err := client.WriteMessage(websocket.TextMessage, message)
+				if err != nil {
+					log.Printf("websocket error: %v", err)
+					client.Close()
+					delete(h.clients, client)
+				}
+			}
+		}
+	}
+}
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+func (s *Server) handleWebSocket(c *gin.Context) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		s.logger.Printf("Failed to upgrade connection: %v", err)
 		return
 	}
-	defer func(conn *websocket.Conn) {
-		err := conn.Close()
-		if err != nil {
-			logger.Error.Printf("Failed to close websocket connection: %v", err)
-		}
-	}(conn)
+	s.hub.register <- conn
 
-	clients[conn] = true
+	defer func() {
+		s.hub.unregister <- conn
+		conn.Close()
+	}()
 
 	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
+		if _, _, err := conn.ReadMessage(); err != nil {
 			break
-		}
-
-		for client := range clients {
-			if err := client.WriteMessage(websocket.TextMessage, msg); err != nil {
-				err := client.Close()
-				if err != nil {
-					logger.Error.Printf("Failed to close websocket connection: %v", err)
-				}
-				delete(clients, client)
-			}
 		}
 	}
 }

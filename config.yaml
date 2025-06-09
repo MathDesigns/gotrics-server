@@ -1,4 +1,0 @@
-server_port: "8080"
-db_path: "./metrics.db"
-
-server_address: "http://localhost:8080"

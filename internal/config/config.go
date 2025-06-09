@@ -2,30 +2,33 @@ package config
 
 import (
 	"gopkg.in/yaml.v3"
-	"log"
 	"os"
 )
 
+type InfluxDBConfig struct {
+	URL    string `yaml:"url"`
+	Token  string `yaml:"token"`
+	Org    string `yaml:"org"`
+	Bucket string `yaml:"bucket"`
+}
+
 type Config struct {
-	ServerPort string `yaml:"server_port"`
-	DBPath     string `yaml:"db_path"`
+	ListenAddress  string         `yaml:"listen_address"`
+	AgentAuthToken string         `yaml:"agent_auth_token"`
+	InfluxDB       InfluxDBConfig `yaml:"influxdb"`
 }
 
 func LoadConfig(path string) (*Config, error) {
-	file, err := os.Open(path)
+	cfg := &Config{}
+
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			log.Fatal(err)
-		}
-	}(file)
 
-	var cfg Config
-	if err := yaml.NewDecoder(file).Decode(&cfg); err != nil {
+	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
-	return &cfg, nil
+
+	return cfg, nil
 }

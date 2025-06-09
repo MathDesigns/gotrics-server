@@ -5,12 +5,6 @@ import (
 	"os"
 )
 
-var (
-	Info  *log.Logger
-	Error *log.Logger
-)
-
-func Init() {
-	Info = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
-	Error = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+func New(prefix string) *log.Logger {
+	return log.New(os.Stdout, prefix, log.LstdFlags)
 }
