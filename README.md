@@ -1,4 +1,6 @@
-# ⚡ GoTrics Server
+# ⚡ GoTrics Server (ARCHIVED) V2 Soon with different architecture
+
+THIS REPOSITORY HAS BEEN ARCHIVED
 
 > A self-hosted, lightweight infrastructure monitoring solution designed for simplicity.
 
